@@ -6,6 +6,22 @@ import time
 import datetime
 import threading
 import os
+# --- AGREGA ESTO AQUÍ ---
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "BotMoon está operando"
+
+def run():
+    app.run(host='0.0.0.0', port=10000) # Render suele usar el puerto 10000 por defecto
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 # --- 1. CONFIGURACIÓN SEGURA ---
 import os # Esta librería es la que lee las llaves ocultas
@@ -205,10 +221,17 @@ def callback_finalizar(call):
 # --- 8. EJECUCIÓN ---
 if __name__ == "__main__":
     iniciar_db()
+
+    # --- AGREGA ESTO AQUÍ ---
+    keep_alive()
+    # ------------------------
+
     threading.Thread(target=hilo_horario, daemon=True).start()
     print("🚀 BOT ACTIVO")
+
     while True:
         try:
             bot.infinity_polling(timeout=10)
-        except:
+        except Exception as e:
+            print(f"Error: {e}")
             time.sleep(5)
