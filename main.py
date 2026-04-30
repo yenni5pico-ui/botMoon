@@ -1,10 +1,8 @@
 import telebot
 from telebot import types
 import sqlite3
-import schedule
 import time
 import datetime
-import threading
 import os
 import random
 from flask import Flask
@@ -28,21 +26,20 @@ def keep_alive():
     t.start()
 
 
-# --- CONFIGURACIÓN SEGURA ---
+# --- CONFIGURACIÓN DEL BOT ---
 TOKEN = os.getenv('TOKEN_TELEGRAM')
-MI_CHAT_ID = os.getenv('MI_CHAT_ID')
 bot = telebot.TeleBot(TOKEN)
-ID_STICKER_DESPEDIDA = "CAACAgIAAxkBAAEX4GVmN_Yf0Z8zG3Vl8y3_v9k7fQf9fAACQgMAAs-7BQAB4_l_8g_p9cQ0BA"
+
+# Diccionario para que el bot "recuerde" cuántas cosas fuera de contexto le han dicho
+contador_charla = {}
 
 
-# --- UTILIDADES PARA "HUMANIZAR" ---
+# --- UTILIDADES ---
 def enviar_escribiendo(chat_id, segundos=1.5):
-    """Simula que el bot está escribiendo"""
     bot.send_chat_action(chat_id, 'typing')
     time.sleep(segundos)
 
 
-# --- BASE DE DATOS ---
 def iniciar_db():
     conn = sqlite3.connect('tareas.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -71,7 +68,7 @@ def iniciar_db():
 # --- TECLADOS ---
 def menu_principal():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add(types.KeyboardButton('📅 Ver tareas pendientes'), types.KeyboardButton('📝 Nueva Tarea'))
+    markup.add(types.KeyboardButton('📅 Ver tareas'), types.KeyboardButton('📝 Nueva Tarea'))
     return markup
 
 
@@ -81,167 +78,174 @@ def teclado_ahora_despues():
     return markup
 
 
-# --- MANEJADORES DE MENSAJES (MÁS HUMANOS Y DINÁMICOS) ---
+# --- LÓGICA DE CONVERSACIÓN ---
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    # 1. OCULTAR EL /START: Borra el comando del profesor para que el chat se vea limpio
+    # ELIMINA EL /START PARA LIMPIAR LA INTERFAZ
     try:
         bot.delete_message(message.chat.id, message.message_id)
-    except Exception as e:
-        print(f"No se pudo borrar el start: {e}")
+    except:
+        pass
 
+    contador_charla[message.chat.id] = 0  # Reset contador
     enviar_escribiendo(message.chat.id, 1)
-    saludos = ["¡Hola! Qué alegría saludarte. 😊", "¡Hola, hola! Qué bueno verte por aquí. 👋",
-               "¡Hola! Soy botMoon, un gusto saludarte."]
-    bienvenida = f"{random.choice(saludos)}\nPara empezar, ¿podrías decirme tu nombre? Me encantaría saber con quién hablo."
-    msg = bot.send_message(message.chat.id, bienvenida)
+    saludos = ["¡Hola! Qué alegría saludarte. 😊", "¡Hola, hola! Qué bueno verte por aquí. 👋"]
+    msg = bot.send_message(message.chat.id,
+                           f"{random.choice(saludos)}\nSoy **botMoon**. Para empezar, ¿cómo te llamas?",
+                           parse_mode="Markdown")
     bot.register_next_step_handler(msg, proceso_nombre)
 
 
 def proceso_nombre(message):
     nombre = message.text
-    enviar_escribiendo(message.chat.id, 1.5)
-
-    # Si el nombre es muy raro o corto, preguntamos qué quiso decir
-    if len(nombre) < 2:
-        msg = bot.reply_to(message, "¿Perdona? No te entendí bien... ¿Ese es tu nombre o qué quisiste decir? 😅")
-        bot.register_next_step_handler(msg, proceso_nombre)
-        return
-
-    preguntas = [
-        f"¡Mucho gusto, {nombre}! ✨ Cuéntame, ¿cómo vas con tus tareas pendientes? ¿Te sientes al día o tienes mucho acumulado?",
-        f"¡Qué lindo nombre, {nombre}! 😊 ¿Cómo te ha tratado la universidad estos días? ¿Mucha carga de tareas?"
-    ]
-    msg = bot.send_message(message.chat.id, random.choice(preguntas))
+    enviar_escribiendo(message.chat.id, 1)
+    msg = bot.send_message(message.chat.id,
+                           f"¡Mucho gusto, {nombre}! ✨ Cuéntame, ¿cómo vas con tus tareas de la universidad? ¿Estás muy full o vas al día?")
     bot.register_next_step_handler(msg, analizar_estado_tareas)
+
+
+def seguir_corriente(message):
+    chat_id = message.chat.id
+    if chat_id not in contador_charla:
+        contador_charla[chat_id] = 0
+
+    contador_charla[chat_id] += 1
+    enviar_escribiendo(chat_id, 2)
+
+    respuestas_curiosas = [
+        f"¡Vaya! No me esperaba eso de '{message.text}'. Cuéntame más, me dio curiosidad. 😊",
+        "Interesante... nunca lo había pensado así. ¿Y qué más? 🧐",
+        "Entiendo perfectamente. Es un tema curioso, ¿no crees?"
+    ]
+
+    if contador_charla[chat_id] < 3:
+        msg = bot.send_message(chat_id, random.choice(respuestas_curiosas))
+        bot.register_next_step_handler(msg, seguir_corriente)
+    else:
+        # A LA TERCERA VEZ, EL BOT RETOMA EL CONTROL
+        contador_charla[chat_id] = 0
+        msg = bot.send_message(
+            chat_id,
+            "Jajaja, ¡qué buena charla! Pero antes de que se me olvide... ⏳\n\n"
+            "**¿Quieres que sigamos con el registro de tu tarea o prefieres hacerlo más tarde?**",
+            reply_markup=teclado_ahora_despues(),
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, manejar_decision_agenda)
 
 
 def analizar_estado_tareas(message):
     respuesta = message.text.lower()
-    enviar_escribiendo(message.chat.id, 2)
+    palabras_clave = ["bien", "mal", "full", "estres", "nada", "poco", "mucho", "dia", "clase", "tarea", "uni"]
 
-    # INTERFAZ DE CAPTURA: Si el prof dice algo fuera de contexto
-    palabras_clave = ["bien", "mal", "full", "estres", "nada", "poco", "mucho", "dia", "clase", "tarea"]
-    if not any(palabra in respuesta for palabra in palabras_clave):
-        msg = bot.reply_to(message, f"Vaya, me perdí un poco... ¿Qué quisiste decir con '{message.text}'? 🤔")
-        bot.register_next_step_handler(msg, retomar_hilo_tareas)
+    # SI DICE ALGO QUE NO ES DE TAREAS, LE SIGUE LA CORRIENTE
+    if not any(p in respuesta for p in palabras_clave):
+        seguir_corriente(message)
         return
 
-    if any(p in respuesta for p in ["mal", "mucho", "full", "colapsado", "estres"]):
-        reaccion = "¡Uy! Entiendo perfectamente, a veces las entregas se amontonan de forma estresante. 😰"
-    elif any(p in respuesta for p in ["bien", "al día", "tranquilo", "poc"]):
-        reaccion = "¡Qué éxito! Me alegra que lleves ese control. 👏"
-    else:
-        reaccion = "Entiendo. Siempre es un reto mantenerse al día con todo. 🧐"
-
-    ofrecer_agenda(message, reaccion)
-
-
-def retomar_hilo_tareas(message):
-    enviar_escribiendo(message.chat.id, 1)
-    bot.send_message(message.chat.id, "¡Ah, ya entiendo! Gracias por explicarme. 😊")
-    ofrecer_agenda(message, "Volviendo a lo nuestro...")
-
-
-def ofrecer_agenda(message, reaccion):
     enviar_escribiendo(message.chat.id, 1.5)
-    msg = bot.send_message(
-        message.chat.id,
-        f"{reaccion}\n\n¿Te gustaría que te ayude a **agendar una tarea ahora** para llevar el control, o prefieres **realizarlo más tarde**? ✨",
-        reply_markup=teclado_ahora_despues(),
-        parse_mode="Markdown"
-    )
+    if any(p in respuesta for p in ["mal", "mucho", "full", "estres"]):
+        reaccion = "¡Uy! Entiendo, a veces las entregas se amontonan. 😰"
+    else:
+        reaccion = "¡Qué éxito! Me alegra que lleves ese control. 👏"
+
+    msg = bot.send_message(message.chat.id,
+                           f"{reaccion}\n\n¿Te gustaría agendar una tarea ahora o lo realizamos más tarde?",
+                           reply_markup=teclado_ahora_despues())
     bot.register_next_step_handler(msg, manejar_decision_agenda)
 
 
 def manejar_decision_agenda(message):
     texto = message.text.lower()
-    if "ahora" in texto or "sí" in texto:
+    if "ahora" in texto or "sí" in texto or "vale" in texto:
         enviar_escribiendo(message.chat.id, 1)
-        msg = bot.send_message(message.chat.id, "¡Perfecto! Vamos a organizarnos. 🚀\n📌 Dime: **Materia - Tema**",
+        msg = bot.send_message(message.chat.id,
+                               "¡Perfecto! Vamos a organizarnos. 🚀\n📌 Dime: **¿Qué tarea quieres anotar?** (Materia y tema)",
                                reply_markup=types.ReplyKeyboardRemove(), parse_mode="Markdown")
         bot.register_next_step_handler(msg, proceso_fecha)
     else:
         enviar_escribiendo(message.chat.id, 1)
-        bot.send_message(message.chat.id,
-                         "¡Entendido! No hay problema. Aquí estaré en el menú principal para cuando decidas poner orden. ¡Mucho éxito! ✨",
+        bot.send_message(message.chat.id, "¡Entendido! Aquí estaré en el menú principal para cuando lo necesites. ✨",
                          reply_markup=menu_principal())
 
 
-# --- REGISTRO DE TAREAS (Tu lógica original mejorada) ---
+# --- FLUJO DE AGENDADO FLEXIBLE ---
 
 def proceso_fecha(message):
     materia_tema = message.text
     enviar_escribiendo(message.chat.id, 1)
-    msg = bot.send_message(message.chat.id, "🗓️ ¿Para qué fecha es la entrega? (Formato: AAAA-MM-DD):")
+    msg = bot.send_message(message.chat.id,
+                           f"Vale, anoto: *{materia_tema}*.\n\n¿Para qué fecha es? (Dime el día o la fecha)",
+                           parse_mode="Markdown")
     bot.register_next_step_handler(msg, lambda m: confirmar_registro(m, materia_tema))
 
 
 def confirmar_registro(message, materia_tema):
-    fecha = message.text
-    enviar_escribiendo(message.chat.id, 1)
-    resumen = f"⚠️ **¿Confirmas esta tarea?**\n\n📝 {materia_tema}\n📅 {fecha}"
+    fecha_usuario = message.text
+    enviar_escribiendo(message.chat.id, 1.5)
+    resumen = (
+        f"A ver si entendí bien... 🤔\n\n"
+        f"📝 Tarea: **{materia_tema}**\n"
+        f"📅 Fecha: **{fecha_usuario}**\n\n"
+        f"¿Lo guardamos así o prefieres corregir algo?"
+    )
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add(types.KeyboardButton('✅ Sí, guardar'), types.KeyboardButton('❌ Cancelar'))
+    markup.add(types.KeyboardButton('✅ ¡Así está perfecto!'), types.KeyboardButton('🔄 Corregir algo'))
     msg = bot.send_message(message.chat.id, resumen, parse_mode="Markdown", reply_markup=markup)
-    bot.register_next_step_handler(msg, lambda m: guardado_final(m, materia_tema, fecha))
+    bot.register_next_step_handler(msg, lambda m: guardado_final(m, materia_tema, fecha_usuario))
 
 
 def guardado_final(message, materia_tema, fecha):
-    if message.text == '✅ Sí, guardar':
-        partes = materia_tema.split('-')
-        materia = partes[0].strip()
-        desc = partes[1].strip() if len(partes) > 1 else "General"
-
+    if "perfecto" in message.text.lower() or "sí" in message.text.lower():
         conn = sqlite3.connect('tareas.db')
         cursor = conn.cursor()
         cursor.execute("INSERT INTO tareas (materia, descripcion, fecha, estado) VALUES (?, ?, ?, 0)",
-                       (materia, desc, fecha))
+                       (materia_tema, "Fecha: " + fecha, str(datetime.date.today())))
         conn.commit()
         conn.close()
-        bot.send_message(message.chat.id, "🚀 ¡Tarea guardada! Ya puedes respirar un poco más tranquilo.",
-                         reply_markup=menu_principal())
+        bot.send_message(message.chat.id, "🚀 ¡Listo! Tarea guardada. ¡A por ello!", reply_markup=menu_principal())
     else:
-        bot.send_message(message.chat.id, "❌ Registro cancelado. Volvamos al inicio.", reply_markup=menu_principal())
+        msg = bot.send_message(message.chat.id, "¡Oído al tambor! 📝 Dime de nuevo, ¿qué tarea quieres agendar?",
+                               reply_markup=types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(msg, proceso_fecha)
 
 
-# --- LISTAR TAREAS (Mantenido) ---
+# --- MENÚ GENERAL ---
 @bot.message_handler(func=lambda message: True)
 def manejar_menu_general(message):
     texto = message.text.lower()
-    if "pendientes" in texto or "ver" in texto:
+    if "ver" in texto or "tareas" in texto:
         listar_tareas(message)
-    elif "nueva" in texto or "tarea" in texto:
+    elif "nueva" in texto or "agendar" in texto:
         msg = bot.send_message(message.chat.id, "📌 Dime: **Materia - Tema**", reply_markup=types.ReplyKeyboardRemove(),
                                parse_mode="Markdown")
         bot.register_next_step_handler(msg, proceso_fecha)
     else:
-        bot.reply_to(message, "Usa los botones de abajo para navegar, ¡es más fácil! 👇", reply_markup=menu_principal())
+        bot.reply_to(message, "Usa los botones para que sea más fácil, o dime 'Nueva Tarea'. 👇",
+                     reply_markup=menu_principal())
 
 
 def listar_tareas(message):
     conn = sqlite3.connect('tareas.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT id, materia, descripcion, fecha FROM tareas WHERE estado = 0 ORDER BY fecha ASC")
+    cursor.execute("SELECT id, materia, descripcion, fecha FROM tareas WHERE estado = 0 ORDER BY id DESC")
     tareas = cursor.fetchall()
     conn.close()
 
     if not tareas:
-        bot.send_message(message.chat.id, "☕ ¡Felicidades! No tienes nada pendiente. ¿Quieres agendar algo nuevo?",
-                         reply_markup=menu_principal())
+        bot.send_message(message.chat.id, "☕ ¡No tienes nada pendiente! Qué relax.", reply_markup=menu_principal())
     else:
-        bot.send_message(message.chat.id, "📅 **Esto es lo que tienes pendiente:**", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "📅 **Pendientes:**", parse_mode="Markdown")
         for t in tareas:
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("✅ Finalizada", callback_data=f"done_{t[0]}"))
-            texto = f"📖 **{t[1]}**\n📝 {t[2]}\n🗓️ {t[3]}"
-            bot.send_message(message.chat.id, texto, parse_mode="Markdown", reply_markup=markup)
+            bot.send_message(message.chat.id, f"📖 **{t[1]}**\n{t[2]}", parse_mode="Markdown", reply_markup=markup)
 
 
-# --- EJECUCIÓN ---
+# --- INICIO ---
 if __name__ == "__main__":
     iniciar_db()
     keep_alive()
-    print("🚀 BOTMOON ACTIVO: Start oculto y modo humano activado")
+    print("🚀 BOTMOON ACTIVO: Modo Humano con memoria de charla activado")
     bot.infinity_polling()
