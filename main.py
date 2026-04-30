@@ -288,6 +288,20 @@ def listar_tareas(message):
             bot.send_message(message.chat.id, f"📖 **{t[1]}**\n{t[2]}", parse_mode="Markdown", reply_markup=markup)
 
 
+@bot.message_handler(
+    func=lambda message: any(palabra in message.text.lower() for palabra in ["gracias", "thank", "agradecido"]))
+def despedida_amable(message):
+    enviar_escribiendo(message.chat.id, 1.5)
+
+    respuestas_despedida = [
+        "¡De nada! Fue un placer ayudarte. 😊 Vuelve pronto.",
+        "¡A la orden! Aquí estaré para cuando necesites organizar otra tarea. ✨ ¡Vuelve pronto!",
+        "¡No hay de qué! Mucho éxito en tus estudios. 🎓 ¡Vuelve pronto!",
+        "¡Gracias a ti por confiar en botMoon! 🌙 Nos vemos pronto."
+    ]
+
+    bot.reply_to(message, random.choice(respuestas_despedida))
+
 # --- INICIO ---
 if __name__ == "__main__":
     iniciar_db()
