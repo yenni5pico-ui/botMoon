@@ -107,8 +107,13 @@ def proceso_nombre(message):
 def analizar_estado_tareas(message):
     respuesta = message.text.lower()
     chat_id = message.chat.id
-    enviar_escribiendo(chat_id, 1)
 
+    # NUEVO: Si dice gracias aquí, saltamos al flujo de despedida
+    if any(p in respuesta for p in ["gracias", "gracia", "agradecido"]):
+        despedida_amable(message)
+        return
+
+    enviar_escribiendo(chat_id, 1)
     palabras_clave = ["bien", "mal", "full", "estres", "nada", "poco", "mucho", "dia", "clase", "tarea", "uni"]
 
     if any(p in respuesta for p in palabras_clave):
@@ -125,6 +130,13 @@ def analizar_estado_tareas(message):
 
 def seguir_corriente(message):
     chat_id = message.chat.id
+    respuesta = message.text.lower()
+
+    # NUEVO: Si dice gracias mientras le seguimos la corriente, despedimos
+    if any(p in respuesta for p in ["gracias", "gracia", "agradecido"]):
+        despedida_amable(message)
+        return
+
     if chat_id not in contador_charla:
         contador_charla[chat_id] = 0
 
