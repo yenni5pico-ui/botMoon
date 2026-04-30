@@ -135,25 +135,70 @@ def seguir_corriente(message):
         bot.register_next_step_handler(msg, manejar_decision_agenda)
 
 
+# --- BUSCA Y REEMPLAZA ESTAS FUNCIONES EN TU CÓDIGO ---
+
 def analizar_estado_tareas(message):
     respuesta = message.text.lower()
-    palabras_clave = ["bien", "mal", "full", "estres", "nada", "poco", "mucho", "dia", "clase", "tarea", "uni"]
+    chat_id = message.chat.id
+    enviar_escribiendo(chat_id, 1.5)
 
-    # SI DICE ALGO QUE NO ES DE TAREAS, LE SIGUE LA CORRIENTE
-    if not any(p in respuesta for p in palabras_clave):
-        seguir_corriente(message)
-        return
+    # Palabras que indican que SÍ está hablando de la universidad/tareas
+    palabras_clave = ["bien", "mal", "full", "estres", "nada", "poco", "mucho", "dia", "clase", "tarea", "uni",
+                      "estudiando"]
 
-    enviar_escribiendo(message.chat.id, 1.5)
-    if any(p in respuesta for p in ["mal", "mucho", "full", "estres"]):
-        reaccion = "¡Uy! Entiendo, a veces las entregas se amontonan. 😰"
+    if any(p in respuesta for p in palabras_clave):
+        # FLUJO NORMAL: Si responde sobre sus tareas, vamos directo a agendar
+        if any(p in respuesta for p in ["mal", "mucho", "full", "estres"]):
+            reaccion = "¡Uy! Entiendo, a veces las entregas se amontonan. 😰"
+        else:
+            reaccion = "¡Qué éxito! Me alegra que lleves ese control. 👏"
+
+        msg = bot.send_message(chat_id, f"{reaccion}\n\n¿Qué te parece si empezamos agendando una tarea ahora mismo?")
+        bot.register_next_step_handler(msg, proceso_materia_directo)  # Va directo al grano
     else:
-        reaccion = "¡Qué éxito! Me alegra que lleves ese control. 👏"
+        # FLUJO DE DESVÍO: Si el prof dice otra cosa, activamos el contador
+        seguir_corriente(message)
 
+
+def seguir_corriente(message):
+    chat_id = message.chat.id
+    if chat_id not in contador_charla:
+        contador_charla[chat_id] = 0
+
+    contador_charla[chat_id] += 1
+    enviar_escribiendo(chat_id, 2)
+
+    # Respuestas para cuando el bot "sigue la corriente"
+    respuestas_curiosas = [
+        f"¡Vaya! No me esperaba eso de '{message.text}'. Cuéntame más. 😊",
+        "Qué tema tan interesante... ¿Y qué más pasó con eso? 🧐",
+        "Entiendo perfectamente, me dejas pensando. ¿Y entonces?"
+    ]
+
+    if contador_charla[chat_id] < 3:
+        # Sigue la corriente hasta 3 veces
+        msg = bot.send_message(chat_id, random.choice(respuestas_curiosas))
+        bot.register_next_step_handler(msg, seguir_corriente)
+    else:
+        # EL RESCATE: Aquí es donde ofrece hacerlo más tarde porque ya se desviaron mucho
+        contador_charla[chat_id] = 0
+        msg = bot.send_message(
+            chat_id,
+            "Jajaja, ¡qué buena charla! Pero para que no se nos pase el tiempo... ⏳\n\n"
+            "**¿Quieres que retomemos y agendemos tu tarea ahora o prefieres que lo realicemos más tarde?**",
+            reply_markup=teclado_ahora_despues(),
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, manejar_decision_agenda)
+
+
+def proceso_materia_directo(message):
+    # Esta función se llama cuando el flujo es normal y directo
+    enviar_escribiendo(message.chat.id, 1)
     msg = bot.send_message(message.chat.id,
-                           f"{reaccion}\n\n¿Te gustaría agendar una tarea ahora o lo realizamos más tarde?",
-                           reply_markup=teclado_ahora_despues())
-    bot.register_next_step_handler(msg, manejar_decision_agenda)
+                           "🚀 ¡Perfecto! Vamos a organizarnos.\n📌 Dime: **¿Qué materia o tema quieres anotar?**",
+                           reply_markup=types.ReplyKeyboardRemove(), parse_mode="Markdown")
+    bot.register_next_step_handler(msg, proceso_fecha)
 
 
 def manejar_decision_agenda(message):
